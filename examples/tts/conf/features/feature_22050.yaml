@@ -1,0 +1,7 @@
+_target_: nemo.collections.tts.parts.preprocessing.features.AudioFeaturizer
+
+sample_rate: 22050
+win_length: 1024
+hop_length: 256
+lowfreq: 0
+highfreq: 8000
