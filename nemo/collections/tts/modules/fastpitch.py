@@ -373,7 +373,7 @@ class FastPitchModule(NeuralModule, adapter_mixins.AdapterModuleMixin):
     ):
 
         if self.speaker_emb is None or speaker is None:
-            spk_emb = 0
+            spk_emb = None
         else:
             spk_emb = self.speaker_emb(speaker).unsqueeze(1)
 
