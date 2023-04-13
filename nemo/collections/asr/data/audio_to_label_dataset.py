@@ -219,7 +219,7 @@ def get_tarred_speech_label_dataset(
         else:
             datasets.append(dataset)
 
-    return get_chain_dataset(datasets=datasets, ds_config=config)
+    return get_chain_dataset(datasets=datasets, ds_config=config, rank=global_rank)
 
 
 def get_audio_multi_label_dataset(cfg: DictConfig) -> audio_to_label.AudioToMultiLabelDataset:
@@ -303,4 +303,4 @@ def get_tarred_audio_multi_label_dataset(
         else:
             datasets.append(dataset)
 
-    return get_chain_dataset(datasets=datasets, ds_config=cfg)
+    return get_chain_dataset(datasets=datasets, ds_config=cfg, rank=global_rank)
