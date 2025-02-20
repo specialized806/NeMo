@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import shutil
 import tarfile
+import unicodedata
 from abc import ABC, abstractmethod
 from typing import List
 
 import torch
 from omegaconf import DictConfig, OmegaConf, open_dict
+from torch import Tensor
 
 import nemo.collections.asr.models as asr_models
 from nemo.collections.asr.parts.mixins.asr_adapter_mixins import ASRAdapterModelMixin
@@ -31,7 +34,7 @@ from nemo.utils import app_state, logging
 
 
 class ASRBPEMixin(ABC):
-    """ ASR BPE Mixin class that sets up a Tokenizer via a config
+    """ASR BPE Mixin class that sets up a Tokenizer via a config
 
     This mixin class adds the method `_setup_tokenizer(...)`, which can be used by ASR models
     which depend on subword tokenization.
@@ -61,6 +64,8 @@ class ASRBPEMixin(ABC):
             self._setup_aggregate_tokenizer(tokenizer_cfg)
         else:
             self._setup_monolingual_tokenizer(tokenizer_cfg)
+
+        self._derive_tokenizer_properties()
 
     def _setup_monolingual_tokenizer(self, tokenizer_cfg: DictConfig):
         # Prevent tokenizer parallelism (unless user has explicitly set it)
@@ -106,8 +111,12 @@ class ASRBPEMixin(ABC):
                 if special_tokens is not None:
                     raise ValueError("`special_tokens` are no longer supported for SentencePiece based tokenizers.")
 
-            # Update special tokens
-            self.tokenizer = tokenizers.SentencePieceTokenizer(model_path=model_path)
+            if "custom_tokenizer" in self.tokenizer_cfg:
+                self.tokenizer = self.from_config_dict(
+                    {"_target_": tokenizer_cfg["custom_tokenizer"]["_target_"], "model_path": model_path}
+                )
+            else:
+                self.tokenizer = tokenizers.SentencePieceTokenizer(model_path=model_path)
 
             if 'vocab_path' in self.tokenizer_cfg:
                 vocab_path = self.tokenizer_cfg.get('vocab_path')
@@ -204,7 +213,12 @@ class ASRBPEMixin(ABC):
         tokenizers_dict = {}
         # init each of the monolingual tokenizers found in the config and assemble into  AggregateTokenizer
         for lang, tokenizer_config in self.tokenizer_cfg[self.AGGREGATE_TOKENIZERS_DICT_PREFIX].items():
-            (tokenizer, model_path, vocab_path, spe_vocab_path,) = self._make_tokenizer(tokenizer_config, lang)
+            (
+                tokenizer,
+                model_path,
+                vocab_path,
+                spe_vocab_path,
+            ) = self._make_tokenizer(tokenizer_config, lang)
 
             tokenizers_dict[lang] = tokenizer
             if hasattr(self, 'cfg'):
@@ -465,6 +479,15 @@ class ASRBPEMixin(ABC):
 
                     logging.info(f"Saved {nemo_object_name} at {os.path.join(dir, new_name)}")
 
+    def _derive_tokenizer_properties(self):
+        vocab = self.tokenizer.tokenizer.get_vocab()
+
+        capitalized_tokens = {token.strip() for token in vocab if any(char.isupper() for char in token)}
+        self.tokenizer.supports_capitalization = bool(capitalized_tokens)
+
+        punctuation = {char for token in vocab for char in token if unicodedata.category(char).startswith('P')}
+        self.tokenizer.supported_punctuation = punctuation
+
 
 class ASRModuleMixin(ASRAdapterModelMixin):
     """
@@ -501,10 +524,17 @@ class ASRModuleMixin(ASRAdapterModelMixin):
 
         Args:
             self_attention_model (str): type of the attention layer and positional encoding
-                'rel_pos': relative positional embedding and Transformer-XL
-                'rel_pos_local_attn': relative positional embedding and Transformer-XL with local attention using
+
+                'rel_pos':
+                    relative positional embedding and Transformer-XL
+
+                'rel_pos_local_attn':
+                    relative positional embedding and Transformer-XL with local attention using
                     overlapping windows. Attention context is determined by att_context_size parameter.
-                'abs_pos': absolute positional embedding and Transformer
+
+                'abs_pos':
+                    absolute positional embedding and Transformer
+
                 If None is provided, the self_attention_model isn't changed. Defauts to None.
             att_context_size (List[int]): List of 2 ints corresponding to left and right attention context sizes,
                 or None to keep as it is. Defauts to None.
@@ -561,14 +591,14 @@ class ASRModuleMixin(ASRAdapterModelMixin):
 
     def conformer_stream_step(
         self,
-        processed_signal: torch.Tensor,
-        processed_signal_length: torch.Tensor = None,
-        cache_last_channel: torch.Tensor = None,
-        cache_last_time: torch.Tensor = None,
-        cache_last_channel_len: torch.Tensor = None,
+        processed_signal: Tensor,
+        processed_signal_length: Tensor = None,
+        cache_last_channel: Tensor = None,
+        cache_last_time: Tensor = None,
+        cache_last_channel_len: Tensor = None,
         keep_all_outputs: bool = True,
         previous_hypotheses: List[Hypothesis] = None,
-        previous_pred_out: torch.Tensor = None,
+        previous_pred_out: Tensor = None,
         drop_extra_pre_encoded: int = None,
         return_transcription: bool = True,
         return_log_probs: bool = False,
@@ -596,7 +626,6 @@ class ASRModuleMixin(ASRAdapterModelMixin):
             cache_last_time_next: the updated tensor cache for last time layers to be used for next streaming step
             cache_last_channel_next_len: the updated lengths for cache_last_channel
             best_hyp: the best hypotheses for the Transducer models
-
             log_probs: the logits tensor of current streaming chunk, only returned when return_log_probs=True
             encoded_len: the length of the output log_probs + history chunk log_probs, only returned when return_log_probs=True
         """
@@ -604,7 +633,7 @@ class ASRModuleMixin(ASRAdapterModelMixin):
             raise NotImplementedError(f"stream_step does not support {type(self)}!")
 
         if not isinstance(self.encoder, StreamingEncoder):
-            raise NotImplementedError(f"Encoder of this model does not support streaming!")
+            raise NotImplementedError("Encoder of this model does not support streaming!")
 
         if isinstance(self, asr_models.EncDecRNNTModel) and return_transcription is False:
             logging.info(
@@ -670,10 +699,10 @@ class ASRModuleMixin(ASRAdapterModelMixin):
                         decoder_lengths=encoded_len[preds_idx : preds_idx + 1],
                         return_hypotheses=False,
                     )
-                    all_hyp_or_transcribed_texts.append(decoded_out[0][0])
+                    all_hyp_or_transcribed_texts.append(decoded_out[0])
             best_hyp = None
         else:
-            best_hyp, all_hyp_or_transcribed_texts = self.decoding.rnnt_decoder_predictions_tensor(
+            best_hyp = self.decoding.rnnt_decoder_predictions_tensor(
                 encoder_output=encoded,
                 encoded_lengths=encoded_len,
                 return_hypotheses=True,
@@ -681,8 +710,7 @@ class ASRModuleMixin(ASRAdapterModelMixin):
             )
             greedy_predictions = [hyp.y_sequence for hyp in best_hyp]
 
-            if all_hyp_or_transcribed_texts is None:
-                all_hyp_or_transcribed_texts = best_hyp
+            all_hyp_or_transcribed_texts = best_hyp
 
         result = [
             greedy_predictions,
@@ -732,7 +760,7 @@ class ASRModuleMixin(ASRAdapterModelMixin):
             raise NotImplementedError(f"simulate streaming does not support {type(self)}!")
 
         if not isinstance(self.encoder, StreamingEncoder):
-            raise NotImplementedError(f"Encoder of this model does not support streaming!")
+            raise NotImplementedError("Encoder of this model does not support streaming!")
 
         data_loader = self._setup_streaming_transcribe_dataloader(paths2audio_files, batch_size, online_normalization)
 
@@ -819,7 +847,7 @@ class ASRModuleMixin(ASRAdapterModelMixin):
 
         Args:
             paths2audio_files: (a list) of paths to audio files.
-            batch_size: (int) batch size to use during inference. \
+            batch_size: (int) batch size to use during inference.
                 Bigger will result in better throughput performance but would use more memory.
             online_normalization: whether to do online normalization
         Returns:
@@ -839,7 +867,23 @@ class ASRModuleMixin(ASRAdapterModelMixin):
                 streaming_buffer.reset_buffer()
 
 
-class DiarizationMixin(ABC):
+class VerificationMixin(ABC):
+    @staticmethod
+    def path2audio_files_to_manifest(paths2audio_files, manifest_filepath):
+        """
+        Takes paths to audio files and manifest filepath and creates manifest file with the audios
+        Args:
+            paths2audio_files: paths to audio fragment to be verified
+            manifest_filepath: path to manifest file to bre created
+        """
+        with open(manifest_filepath, 'w', encoding='utf-8') as fp:
+            for audio_file in paths2audio_files:
+                audio_file = audio_file.strip()
+                entry = {'audio_filepath': audio_file, 'offset': 0.0, 'duration': None, 'text': '-', 'label': 'infer'}
+                fp.write(json.dumps(entry) + '\n')
+
+
+class DiarizationMixin(VerificationMixin):
     @abstractmethod
     def diarize(self, paths2audio_files: List[str], batch_size: int = 1) -> List[str]:
         """
