@@ -16,6 +16,11 @@
 from nemo.collections.vlm.clip.data import ClipMockDataModule
 from nemo.collections.vlm.clip.model import CLIPConfigB32, CLIPConfigL14, CLIPModel
 
+# Gemma3
+from nemo.collections.vlm.gemma3vl.model.base import Gemma3VLConfig, Gemma3VLModel
+from nemo.collections.vlm.gemma3vl.model.gemma3vl import Gemma3VLConfig4B, Gemma3VLConfig12B, Gemma3VLConfig27B
+from nemo.collections.vlm.gemma3vl.model.vision import Gemma3VLMultimodalProjectorConfig, Gemma3VLVisionConfig
+
 # HF
 from nemo.collections.vlm.hf.data.hf_dataset import HFDatasetDataModule
 from nemo.collections.vlm.hf.model.hf_auto_model_for_image_text_to_text import HFAutoModelForImageTextToText
@@ -63,8 +68,20 @@ from nemo.collections.vlm.neva.model.llava import Llava15Config7B, Llava15Config
 # PEFT
 from nemo.collections.vlm.peft import LoRA
 from nemo.collections.vlm.qwen2vl.data import Qwen2VLDataConfig, Qwen2VLMockDataModule, Qwen2VLPreloadedDataModule
-from nemo.collections.vlm.qwen2vl.model.base import Qwen2VLConfig, Qwen2VLModel, Qwen2VLVisionConfig
-from nemo.collections.vlm.qwen2vl.model.qwen2vl import Qwen2VLConfig2B, Qwen2VLConfig7B
+from nemo.collections.vlm.qwen2vl.model.base import (
+    Qwen2VLConfig,
+    Qwen2VLModel,
+    Qwen2VLVisionConfig,
+    Qwen25VLVisionConfig,
+)
+from nemo.collections.vlm.qwen2vl.model.qwen2vl import (
+    Qwen2VLConfig2B,
+    Qwen2VLConfig7B,
+    Qwen25VLConfig3B,
+    Qwen25VLConfig7B,
+    Qwen25VLConfig32B,
+    Qwen25VLConfig72B,
+)
 
 # RECIPES
 from nemo.collections.vlm.recipes import *
@@ -118,7 +135,19 @@ __all__ = [
     "Qwen2VLConfig7B",
     "Qwen2VLVisionConfig",
     "Qwen2VLModel",
+    "Qwen25VLConfig3B",
+    "Qwen25VLConfig7B",
+    "Qwen25VLConfig32B",
+    "Qwen25VLConfig72B",
+    "Qwen25VLVisionConfig",
     "Qwen2VLDataConfig",
+    "Gemma3VLConfig",
+    "Gemma3VLConfig4B",
+    "Gemma3VLConfig12B",
+    "Gemma3VLConfig27B",
+    "Gemma3VLVisionConfig",
+    "Gemma3VLMultimodalProjectorConfig",
+    "Gemma3VLModel",
     "LlavaNextTaskEncoder",
     "MLlamaModel",
     "MLlamaModelConfig",
