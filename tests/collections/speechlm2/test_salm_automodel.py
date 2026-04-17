@@ -24,7 +24,9 @@ from nemo.collections.common.data.lhotse.text_adapters import AudioTurn, TextTur
 from nemo.collections.common.data.utils import move_data_to_device
 from nemo.collections.common.prompts import PromptFormatter
 from nemo.collections.speechlm2.data import SALMDataset
-from nemo.collections.speechlm2.models.salm_asr_decoder import SALMWithAsrDecoder
+from nemo.collections.speechlm2.models import SALMAutomodel
+
+requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="SALMAutomodel requires CUDA")
 
 if torch.cuda.is_available():
     torch.set_default_device('cuda')
@@ -34,81 +36,82 @@ def resolve_pretrained_models():
     if os.path.exists("/home/TestData/speechlm/pretrained_models"):
         # CI pre-cached paths:
         return {
-            "pretrained_llm": "/home/TestData/speechlm/pretrained_models/TinyLlama--TinyLlama_v1.1",
-            "pretrained_asr": "/home/TestData/speechlm/pretrained_models/parakeet-tdt-0.6b-v2.nemo",
+            "pretrained_llm": "/home/TestData/speechlm/pretrained_models/Qwen--Qwen3-1.7B",
+            "pretrained_asr": "/home/TestData/speechlm/pretrained_models/canary-1b-flash.nemo",
         }
     else:
         # HF URLs:
         return {
-            "pretrained_asr": "nvidia/parakeet-tdt-0.6b-v2",
-            "pretrained_llm": "TinyLlama/TinyLlama_v1.1",
+            "pretrained_asr": "nvidia/canary-1b-flash",
+            "pretrained_llm": "Qwen/Qwen3-1.7B",
         }
 
 
 AUDIO_LOCATOR_TAG = "<|audioplaceholder|>"
-PROMPT = "llama2"
+PROMPT = "qwen"
 
 
 @pytest.fixture(scope="session")
 def model():
+    if not torch.cuda.is_available():
+        pytest.skip("SALMAutomodel requires CUDA")
     cfg = {
         **resolve_pretrained_models(),
-        "pretrained_weights": True,
+        "pretrained_weights": False,
         "prompt_format": PROMPT,
         "audio_locator_tag": AUDIO_LOCATOR_TAG,
         "perception": {
-            "target": "nemo.collections.speechlm2.modules.perception.AudioTranscriptionPerceptionModule",
+            "target": "nemo.collections.speechlm2.modules.perception.AudioPerceptionModule",
             "output_dim": 2048,
-            "asr": {
-                "encoder": {
-                    "_target_": "nemo.collections.asr.modules.ConformerEncoder",
-                    "att_context_size": [-1, -1],
-                    "causal_downsampling": False,
-                    "conv_context_size": None,
-                    "conv_kernel_size": 9,
-                    "conv_norm_type": "batch_norm",
-                    "d_model": 1024,
-                    "dropout": 0.1,
-                    "dropout_att": 0.1,
-                    "dropout_emb": 0.0,
-                    "dropout_pre_encoder": 0.1,
-                    "feat_in": 128,
-                    "feat_out": -1,
-                    "ff_expansion_factor": 4,
-                    "n_heads": 8,
-                    "n_layers": 2,
-                    "pos_emb_max_len": 5000,
-                    "self_attention_model": "rel_pos",
-                    "subsampling": "dw_striding",
-                    "subsampling_conv_channels": 256,
-                    "subsampling_factor": 8,
-                },
-                "preprocessor": {
-                    "_target_": "nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor",
-                    "dither": 1e-05,
-                    "features": 128,
-                    "frame_splicing": 1,
-                    "log": True,
-                    "n_fft": 512,
-                    "normalize": "per_feature",
-                    "pad_to": 0,
-                    "pad_value": 0.0,
-                    "sample_rate": 16000,
-                    "window": "hann",
-                    "window_size": 0.025,
-                    "window_stride": 0.01,
-                },
+            "encoder": {
+                "_target_": "nemo.collections.asr.modules.ConformerEncoder",
+                "att_context_size": [-1, -1],
+                "causal_downsampling": False,
+                "conv_context_size": None,
+                "conv_kernel_size": 9,
+                "conv_norm_type": "batch_norm",
+                "d_model": 1024,
+                "dropout": 0.1,
+                "dropout_att": 0.1,
+                "dropout_emb": 0.0,
+                "dropout_pre_encoder": 0.1,
+                "feat_in": 128,
+                "feat_out": -1,
+                "ff_expansion_factor": 4,
+                "n_heads": 8,
+                "n_layers": 2,
+                "pos_emb_max_len": 5000,
+                "self_attention_model": "rel_pos",
+                "subsampling": "dw_striding",
+                "subsampling_conv_channels": 256,
+                "subsampling_factor": 8,
             },
             "modality_adapter": {
                 "_target_": "nemo.collections.speechlm2.modules.perception.IdentityConnector",
                 "d_model": 1024,
             },
+            "preprocessor": {
+                "_target_": "nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor",
+                "dither": 1e-05,
+                "features": 128,
+                "frame_splicing": 1,
+                "log": True,
+                "n_fft": 512,
+                "normalize": "per_feature",
+                "pad_to": 0,
+                "pad_value": 0.0,
+                "sample_rate": 16000,
+                "window": "hann",
+                "window_size": 0.025,
+                "window_stride": 0.01,
+            },
         },
         "optimizer": {"_target_": "torch.optim.AdamW"},
+        "torch_dtype": "bfloat16",
     }
-    model = SALMWithAsrDecoder(cfg)
-    if torch.cuda.is_available():
-        model.to("cuda")
+    model = SALMAutomodel(cfg)
+    model.configure_model()
+    model.to("cuda")
     return model
 
 
@@ -145,14 +148,15 @@ def training_cutset_batch():
     )
 
 
-def test_salm_dataset(dataset, prompt_formatter, training_cutset_batch):
+@requires_cuda
+def test_salm_automodel_dataset(dataset, prompt_formatter, training_cutset_batch):
     # This first step pre-tokenizes the examples, usually handled within `get_lhotse_dataloder_from_config`.
     training_cutset_batch = training_cutset_batch.map(lambda c: c.apply_prompt_format(prompt_formatter), apply_fn=None)
     # fmt: off
     tokenized = training_cutset_batch[0].input_ids
     assert (
         prompt_formatter.tokenizer.tokenizer.decode(tokenized) ==
-        f"<s> [INST] Repeat after me: {AUDIO_LOCATOR_TAG} [/INST] Some text transcription. </s>"
+        f"<|im_start|>user\nRepeat after me: {AUDIO_LOCATOR_TAG}<|im_end|>\n<|im_start|>assistant\nSome text transcription.<|im_end|>\n"
     )
     # fmt: on
     batch = dataset[training_cutset_batch]
@@ -161,7 +165,8 @@ def test_salm_dataset(dataset, prompt_formatter, training_cutset_batch):
         assert torch.is_tensor(batch[key])
 
 
-def test_salm_training_step(model, dataset, prompt_formatter, training_cutset_batch):
+@requires_cuda
+def test_salm_automodel_training_step(model, dataset, prompt_formatter, training_cutset_batch):
     training_cutset_batch = training_cutset_batch.map(lambda c: c.apply_prompt_format(prompt_formatter), apply_fn=None)
     batch = dataset[training_cutset_batch]
     batch = move_data_to_device(batch, device=model.device)
@@ -171,7 +176,8 @@ def test_salm_training_step(model, dataset, prompt_formatter, training_cutset_ba
     assert results["loss"] > 0
 
 
-def test_salm_validation_step(model, dataset, prompt_formatter, training_cutset_batch):
+@requires_cuda
+def test_salm_automodel_validation_step(model, dataset, prompt_formatter, training_cutset_batch):
     model.on_validation_epoch_start()
     training_cutset_batch = training_cutset_batch.map(lambda c: c.apply_prompt_format(prompt_formatter), apply_fn=None)
     batch = dataset[training_cutset_batch]
@@ -180,7 +186,8 @@ def test_salm_validation_step(model, dataset, prompt_formatter, training_cutset_
     assert results is None
 
 
-def test_salm_generation(model):
+@requires_cuda
+def test_salm_automodel_generation(model):
     answer = model.generate(
         prompts=[
             [
@@ -197,6 +204,7 @@ def test_salm_generation(model):
     assert (answer < model.text_vocab_size).all()
 
 
+@requires_cuda
 @pytest.mark.parametrize(
     ("enable_thinking", "expected_formatter_kwargs"),
     [
@@ -204,7 +212,9 @@ def test_salm_generation(model):
         (None, {}),
     ],
 )
-def test_salm_generation_passes_enable_thinking(model, monkeypatch, enable_thinking, expected_formatter_kwargs):
+def test_salm_automodel_generation_passes_enable_thinking(
+    model, monkeypatch, enable_thinking, expected_formatter_kwargs
+):
     seen = {}
 
     class _FakeFormatter:
@@ -216,11 +226,11 @@ def test_salm_generation_passes_enable_thinking(model, monkeypatch, enable_think
             seen["formatter_kwargs"] = kwargs
             return {"input_ids": torch.tensor([1, 2], dtype=torch.long)}
 
-    def fake_generate(*, inputs_embeds, attention_mask, generation_config, **kwargs):
-        seen["inputs_embeds"] = inputs_embeds
+    def fake_generate(*, input_ids, attention_mask, generation_config, **kwargs):
+        seen["input_ids"] = input_ids
         seen["attention_mask"] = attention_mask
         max_new_tokens = kwargs["max_new_tokens"]
-        return torch.zeros((inputs_embeds.shape[0], max_new_tokens), dtype=torch.long, device=inputs_embeds.device)
+        return torch.zeros((input_ids.shape[0], max_new_tokens), dtype=torch.long, device=input_ids.device)
 
     monkeypatch.setattr(PromptFormatter, "resolve", staticmethod(lambda name: _FakeFormatter))
     monkeypatch.setattr(model.llm, "generate", fake_generate, raising=False)
@@ -233,12 +243,13 @@ def test_salm_generation_passes_enable_thinking(model, monkeypatch, enable_think
 
     assert seen["formatter_kwargs"] == expected_formatter_kwargs
     assert seen["turns"] == [{"role": "user", "slots": {"message": "test"}}]
-    assert seen["inputs_embeds"].shape[:2] == (1, 2)
-    assert torch.equal(seen["attention_mask"], torch.ones((1, 2), dtype=torch.bool, device=model.device))
+    assert seen["input_ids"].shape == (1, 2)
+    assert torch.equal(seen["attention_mask"], torch.ones_like(seen["input_ids"], dtype=torch.bool))
     assert answer.shape == (1, 3)
 
 
-def test_salm_generation_audios_via_prompt(model, tmp_path):
+@requires_cuda
+def test_salm_automodel_generation_audios_via_prompt(model, tmp_path):
     audio_path = tmp_path / "audio.wav"
     dummy_cut(0, with_data=True).save_audio(audio_path)
 
@@ -261,7 +272,8 @@ def test_salm_generation_audios_via_prompt(model, tmp_path):
     assert (answer < model.text_vocab_size).all()
 
 
-def test_salm_generation_prompts_as_tensor(model):
+@requires_cuda
+def test_salm_automodel_generation_prompts_as_tensor(model):
     answer = model.generate(
         prompts=torch.tensor([[1, 2, 3, 4, 5, 6, 7, model.audio_locator_tag_id]]),
         audios=torch.randn(1, 16000),
