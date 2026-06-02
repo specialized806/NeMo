@@ -438,7 +438,7 @@ explicit = true
 
 [dependency-groups]
 test = [
-    "black~=24.3",
+    "black>=24.3,<27.0",
     "click>=8.1",
     "coverage",
     "isort>5.1.0,<6.0.0",
