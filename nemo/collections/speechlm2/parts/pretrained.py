@@ -27,6 +27,7 @@ from nemo.collections.speechlm2.modules import AudioPerceptionModule
 from nemo.collections.speechlm2.parts.precision import fp32_precision
 from nemo.collections.tts.models import AudioCodecModel
 from nemo.utils import logging
+from nemo.utils.compat import python313_pathlib_pickle_compat
 
 
 def load_pretrained_nemo(cls, model_path_or_name: str):
@@ -37,6 +38,14 @@ def load_pretrained_nemo(cls, model_path_or_name: str):
     but is randomly initialized.
     """
     if Path(model_path_or_name).exists() and model_path_or_name.endswith(".nemo"):
+        # Local .nemo restore_from() doesn't resolve the config's `target` (instantiates
+        # the abstract base). Resolve the concrete class first, like from_pretrained().
+        cfg = cls.restore_from(model_path_or_name, return_config=True)
+        target = cfg.get("target", None) if hasattr(cfg, "get") else None
+        if target is not None:
+            from nemo.utils.model_utils import import_class_by_path
+
+            cls = import_class_by_path(target)
         return cls.restore_from(model_path_or_name)
     else:
         return cls.from_pretrained(model_path_or_name)
@@ -605,7 +614,8 @@ def init_from_training_checkpoint(model: torch.nn.Module, checkpoint_path: str):
         # Optimizer states and other trainer state are ignored automatically
         # because we only provide the model's state_dict.
         state_dict = {"state_dict": model.state_dict()}
-        dcp.load(state_dict, checkpoint_id=str(checkpoint_path))
+        with python313_pathlib_pickle_compat():
+            dcp.load(state_dict, checkpoint_id=str(checkpoint_path))
         model.load_state_dict(state_dict["state_dict"])
         logging.info(f"Loaded distributed checkpoint from {checkpoint_path}")
     else:
