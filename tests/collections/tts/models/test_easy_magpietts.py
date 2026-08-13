@@ -36,10 +36,8 @@ pytestmark = pytest.mark.unit
 BPE_TOKENIZER_NAME = "nemotron_bpe"
 BPE_TOKENIZER_MODEL = "nvidia/NVIDIA-Nemotron-Nano-9B-v2"
 try:
-    # Attempt to resolve local cache for CI tests
     BPE_TOKENIZER_MODEL = snapshot_download(BPE_TOKENIZER_MODEL, local_files_only=True)
 except LocalEntryNotFoundError:
-    # For local tests, can call into HF servers to download as needed
     pass
 
 
